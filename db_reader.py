@@ -49,6 +49,25 @@ VALID_VECTOR_SLUGS = {
     "valuation", "bank-stress", "safe-haven",
 }
 
+# Signals whose raw_value must not be redistributed (licensed data).
+# ICE BofA indices: redistribution requires separate ICE license.
+# CBOE indices: redistribution requires CBOE agreement.
+RESTRICTED_RAW_VALUE = {
+    "CF_CCC",       # ICE BofA CCC OAS
+    "CF_HY_OAS",    # ICE BofA High Yield OAS
+    "CF_IG_OAS",    # ICE BofA Investment Grade OAS
+    "MV_MOVE",      # ICE BofA MOVE Index
+    "MV_VIX_ABS",   # CBOE VIX
+    "MV_SKEW",      # CBOE SKEW
+}
+
+
+def _filter_raw_value(signal_id: str, raw_value) -> any:
+    """Return raw_value only if the signal's data is freely redistributable."""
+    if signal_id in RESTRICTED_RAW_VALUE:
+        return None
+    return raw_value
+
 
 # ── JSON Data Loading ────────────────────────────────────────────────────────
 
@@ -179,7 +198,7 @@ def get_vector_status(vector_slug: str) -> dict | None:
                 "date": sig.get("date"),
                 "rarity": sig.get("level_pct"),
                 "velocity": sig.get("traj_pct"),
-                "raw_value": sig.get("raw_value"),
+                "raw_value": _filter_raw_value(sid, sig.get("raw_value")),
                 "tier_since": sig.get("tier_since_k15", sig.get("tier_since")),
             })
 
@@ -240,7 +259,7 @@ def get_signal_detail(signal_id: str) -> dict | None:
         "alert_level": _tier_for_score(score or 0),
         "rarity": sig.get("level_pct"),
         "velocity": sig.get("traj_pct"),
-        "raw_value": sig.get("raw_value"),
+        "raw_value": _filter_raw_value(signal_id, sig.get("raw_value")),
         "data_quality": sig.get("data_quality"),
         "tier_since": sig.get("tier_since_k15", sig.get("tier_since")),
         # k-variant scores
@@ -266,7 +285,7 @@ def get_signal_history(signal_id: str, weeks: int = 52) -> list[dict]:
     return [
         {
             "date": p["d"],
-            "raw_value": p.get("v"),
+            "raw_value": _filter_raw_value(signal_id, p.get("v")),
             "score": p.get("s"),
             "alert_level": _tier_for_score(p.get("s", 0)),
         }
@@ -292,6 +311,7 @@ def get_elevated_signals(threshold: int = 51) -> list[dict]:
                 "date": sig.get("date"),
                 "rarity": sig.get("level_pct"),
                 "velocity": sig.get("traj_pct"),
+                "raw_value": _filter_raw_value(sid, sig.get("raw_value")),
             })
 
     return sorted(results, key=lambda s: s["score"], reverse=True)
