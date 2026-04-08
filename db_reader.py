@@ -46,7 +46,23 @@ DOMAIN_TO_VECTOR_SLUG = {
 
 VALID_VECTOR_SLUGS = {
     "credit-risks", "volatility", "liquidity", "contagion",
-    "valuation", "bank-stress", "safe-haven",
+    "valuation", "bank-stress",
+}
+
+# Signals excluded from MCP entirely — not processed on the web or pending
+# new status level implementation. No scores, no status, no history.
+EXCLUDED_SIGNALS = {
+    "VF_BUFFETT",           # Not processed on web
+    "VF_CONCENTRATION",     # Suspended — no quarterly denominator source
+    "SHD_GOLD_SPY_CORR",    # Safe haven — pending new status levels
+    "SHD_GOLD_SPY_DIVERGE",
+    "SHD_TSY_SPY_CORR",
+    "SHD_TSY_SPY_DIVERGE",
+    "SHD_DXY_SPY_CORR",
+    "SHD_DXY_SPY_DIVERGE",
+    "SHD_DXY_TSY_CORR",
+    "SHD_DXY_TSY_DIVERGE",
+    "SHD_DEBT_GDP",
 }
 
 # Signals whose raw_value must not be redistributed (licensed data).
@@ -67,6 +83,16 @@ def _filter_raw_value(signal_id: str, raw_value) -> any:
     if signal_id in RESTRICTED_RAW_VALUE:
         return None
     return raw_value
+
+
+def _is_excluded(signal_id: str) -> bool:
+    """True if this signal should not appear in MCP responses."""
+    return signal_id in EXCLUDED_SIGNALS
+
+
+def _is_safe_haven_domain(domain: str) -> bool:
+    """True if this domain is safe_haven (excluded from MCP pending rework)."""
+    return domain == "safe_haven"
 
 
 # ── JSON Data Loading ────────────────────────────────────────────────────────
@@ -146,11 +172,13 @@ def get_all_vector_scores() -> list[dict]:
 
     results = []
     for domain, domain_data in snap["domains"].items():
+        if _is_safe_haven_domain(domain):
+            continue
         slug = DOMAIN_TO_VECTOR_SLUG.get(domain)
         if not slug:
             continue
 
-        # Aggregate signals for this domain
+        # Aggregate signals for this domain, excluding suppressed signals
         domain_signals = [
             {
                 "signal_id": sid,
@@ -158,7 +186,7 @@ def get_all_vector_scores() -> list[dict]:
                 "alert_level": _tier_for_score(sig.get("sub_score_k15", sig.get("sub_score", 0))),
             }
             for sid, sig in snap["signals"].items()
-            if sig.get("domain") == domain
+            if sig.get("domain") == domain and not _is_excluded(sid)
         ]
 
         score = domain_data.get("score_k15", domain_data.get("score", 0))
@@ -167,7 +195,7 @@ def get_all_vector_scores() -> list[dict]:
             "domain": domain,
             "score": score,
             "alert_level": _tier_for_score(score),
-            "signal_count": domain_data.get("signals_n", 0),
+            "signal_count": len(domain_signals),
             "elevated_count": sum(1 for s in domain_signals if s["score"] and s["score"] >= 51),
             "in_gss": domain_data.get("in_gss", True),
         })
@@ -189,6 +217,8 @@ def get_vector_status(vector_slug: str) -> dict | None:
 
     signals = []
     for sid, sig in snap["signals"].items():
+        if _is_excluded(sid):
+            continue
         if sig.get("domain") in matching_domains:
             score = sig.get("sub_score_k15", sig.get("sub_score", 0))
             signals.append({
@@ -235,11 +265,16 @@ def get_vector_status(vector_slug: str) -> dict | None:
 
 def get_signal_detail(signal_id: str) -> dict | None:
     """Current reading for a signal with Rarity/Velocity breakdown."""
+    if _is_excluded(signal_id):
+        return None
+
     snap = _snapshot()
     if not snap or signal_id not in snap["signals"]:
         return None
 
     sig = snap["signals"][signal_id]
+    if _is_safe_haven_domain(sig.get("domain", "")):
+        return None
     score = sig.get("sub_score_k15", sig.get("sub_score", 0))
 
     # Get display name from signal_definitions if available
@@ -271,6 +306,8 @@ def get_signal_detail(signal_id: str) -> dict | None:
 
 def get_signal_history(signal_id: str, weeks: int = 52) -> list[dict]:
     """Historical readings for a signal from exported JSON history files."""
+    if _is_excluded(signal_id):
+        return []
     path = os.path.join(config.SIGNAL_HISTORY_DIR, f"{signal_id}.json")
     data = _load_json(path)
     if not data or "data" not in data:
@@ -301,6 +338,8 @@ def get_elevated_signals(threshold: int = 51) -> list[dict]:
 
     results = []
     for sid, sig in snap["signals"].items():
+        if _is_excluded(sid) or _is_safe_haven_domain(sig.get("domain", "")):
+            continue
         score = sig.get("sub_score_k15", sig.get("sub_score", 0))
         if score is not None and score >= threshold:
             results.append({
@@ -328,7 +367,10 @@ def get_recent_alert_events(days: int = 7) -> list[dict]:
     if days <= 7:
         snap = _snapshot()
         if snap and "alert_events_7d" in snap:
-            return snap["alert_events_7d"]
+            events = snap["alert_events_7d"]
+            return [e for e in events
+                    if not _is_excluded(e.get("signal_id", ""))
+                    and e.get("vector_slug") != "safe-haven"]
 
     alerts_data = _load_json(config.ALERTS_JSON)
     if not alerts_data:
@@ -340,7 +382,9 @@ def get_recent_alert_events(days: int = 7) -> list[dict]:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         events = [e for e in events if e.get("event_date", "") >= cutoff]
 
-    return events
+    return [e for e in events
+            if not _is_excluded(e.get("signal_id", ""))
+            and e.get("vector_slug") != "safe-haven"]
 
 
 def get_compound_alerts() -> list[dict]:
@@ -371,34 +415,8 @@ def get_movers() -> list[dict]:
     if not snap:
         return []
 
-    return snap.get("movers_k15", snap.get("movers", []))
-
-
-# ── Safe Haven ───────────────────────────────────────────────────────────────
-
-def get_safe_haven_status() -> dict | None:
-    """Current safe haven regime with correlation readings.
-
-    Reads from the shd_regime_log data in snapshot.json, which includes:
-    - Regime classification (LIQUIDATION_CRISIS, BOND_HEDGE_FAILURE, etc.)
-    - Gold/SPY, Treasury/SPY, DXY/SPY correlations
-    - Confidence score and fiscal modifier
-    """
-    snap = _snapshot()
-    if not snap or "safe_haven_regime" not in snap:
-        return None
-
-    regime = snap["safe_haven_regime"]
-    return {
-        "date": regime.get("date"),
-        "regime": regime.get("regime"),
-        "regime_score": regime.get("vector_score"),
-        "confidence": regime.get("confidence"),
-        "correlations": regime.get("correlations", {}),
-        "correlations_60d": regime.get("correlations_60d", {}),
-        "spy_20d_return": regime.get("spy_20d_return"),
-        "alert_level": _tier_for_score(regime.get("vector_score", 0)),
-    }
+    movers = snap.get("movers_k15", snap.get("movers", []))
+    return [m for m in movers if not _is_excluded(m.get("signal_id", ""))]
 
 
 # ── Narrative ────────────────────────────────────────────────────────────────

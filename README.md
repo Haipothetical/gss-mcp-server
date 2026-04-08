@@ -2,7 +2,7 @@
 
 Model Context Protocol server exposing [Grey Swan Signals](https://greyswansignals.com) market stress intelligence as callable tools for AI agents.
 
-GSS scores 35+ financial signals across 7 risk vectors to produce a composite market stress index (0-100). Data updates weekly. This server provides read-only access to pre-computed scored outputs — no raw data, no methodology.
+GSS scores 30+ financial signals across 6 risk vectors to produce a composite market stress index (0-100). Data updates weekly. This server provides read-only access to pre-computed scored outputs — no raw data, no methodology.
 
 ## Tools
 
@@ -16,7 +16,6 @@ GSS scores 35+ financial signals across 7 risk vectors to produce a composite ma
 | `get_signal_history` | Historical signal readings | weekly-sampled time series |
 | `get_composite_history` | Historical composite | daily time series |
 | `get_weekly_narrative` | Plain-language interpretation | narrative text |
-| `get_safe_haven_status` | Safe haven regime & correlations | regime, gold/bond/dollar readings |
 | `get_alert_events` | Recent signal-level alerts | STATUS_CROSSING, FAST_MOVER events |
 | `get_compound_alerts` | Multi-signal stress patterns | VECTOR_SURGE, CONTAGION, etc. |
 | `get_movers` | Signals with recent changes | crossings + fast movers |
@@ -30,9 +29,8 @@ GSS scores 35+ financial signals across 7 risk vectors to produce a composite ma
 | Volatility | `volatility` | VIX, SKEW, MOVE, Oil Shock, Yield Curve |
 | Liquidity | `liquidity` | Reverse Repo, Reserves, Repo Fails, SOFR |
 | Contagion | `contagion` | Yen Carry, Nikkei Drawdown, EU Sovereign, JGB-UST, CFTC JPY |
-| Valuation | `valuation` | CAPE, Buffett, ERP, Breadth, Inflation Expectations |
+| Valuation | `valuation` | CAPE, ERP, Breadth, Inflation Expectations |
 | Bank Stress | `bank-stress` | KBW/KRE, BKX Relative, BKX-KRE Divergence, Private Market |
-| Safe Haven | `safe-haven` | Gold/SPY, Treasury/SPY, DXY correlations (context only, not in composite) |
 
 ## Alert Events
 

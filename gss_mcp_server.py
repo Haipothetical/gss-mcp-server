@@ -74,7 +74,7 @@ def _respond(data, note: str = None) -> list[TextContent]:
 
 VECTOR_ENUM = [
     "credit-risks", "volatility", "liquidity", "contagion",
-    "valuation", "bank-stress", "safe-haven",
+    "valuation", "bank-stress",
 ]
 
 
@@ -98,7 +98,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Returns the current stress reading for a specific GSS risk vector. "
                 "Vectors: credit-risks, volatility, liquidity, contagion, valuation, "
-                "bank-stress, safe-haven. "
+                "bank-stress. "
                 "Returns vector score, alert level, count of elevated signals, "
                 "and individual signal breakdown with Rarity/Velocity components."
             ),
@@ -220,16 +220,6 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
-            name="get_safe_haven_status",
-            description=(
-                "Returns current safe haven regime classification and correlation readings. "
-                "Regimes: LIQUIDATION_CRISIS, BOND_HEDGE_FAILURE, NORMAL, etc. "
-                "Includes Gold/SPY, Treasury/SPY, DXY/SPY correlations (20-day and 60-day). "
-                "Indicates whether traditional safe haven hedges are operative or breaking down."
-            ),
-            inputSchema={"type": "object", "properties": {}, "required": []},
-        ),
-        Tool(
             name="get_alert_events",
             description=(
                 "Returns recent signal-level alert events: STATUS_CROSSING (upward "
@@ -332,9 +322,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     elif name == "get_weekly_narrative":
         return _respond(db_reader.get_weekly_narrative())
-
-    elif name == "get_safe_haven_status":
-        return _respond(db_reader.get_safe_haven_status())
 
     elif name == "get_alert_events":
         days = arguments.get("days", 7)
