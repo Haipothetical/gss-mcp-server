@@ -8,13 +8,11 @@ GSS scores 30+ financial signals across 6 risk vectors to produce a composite ma
 
 | Tool | Description | Key Output |
 |---|---|---|
-| `get_composite_stress_score` | Current market stress summary | score, alert_tier, week_change, k-variants |
 | `get_vector_status` | Single vector reading | score, elevated_count, signals[] |
 | `get_all_vector_scores` | All vectors at once | array of vector readings |
 | `get_signal_detail` | Individual signal | score, rarity, velocity, k-variants |
 | `get_elevated_signals` | Signals above threshold | filtered signal list |
 | `get_signal_history` | Historical signal readings | weekly-sampled time series |
-| `get_composite_history` | Historical composite | daily time series |
 | `get_weekly_narrative` | Plain-language interpretation | narrative text |
 | `get_alert_events` | Recent signal-level alerts | STATUS_CROSSING, FAST_MOVER events |
 | `get_compound_alerts` | Multi-signal stress patterns | VECTOR_SURGE, CONTAGION, etc. |

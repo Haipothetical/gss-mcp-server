@@ -82,18 +82,6 @@ VECTOR_ENUM = [
 async def list_tools() -> list[Tool]:
     return [
         Tool(
-            name="get_composite_stress_score",
-            description=(
-                "Returns the current GSS composite market stress score (0-100), "
-                "alert tier (BASELINE/WATCH/ALERT/CRITICAL), and week-over-week change. "
-                "The composite reflects conditions across Credit Risks, Volatility, "
-                "Bank Stress, Contagion, Liquidity, and Valuation vectors. "
-                "Includes k-variant scores (k15 production default, k23, k3). "
-                "Use this as the first call to establish current market stress context."
-            ),
-            inputSchema={"type": "object", "properties": {}, "required": []},
-        ),
-        Tool(
             name="get_vector_status",
             description=(
                 "Returns the current stress reading for a specific GSS risk vector. "
@@ -188,28 +176,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="get_composite_history",
-            description=(
-                "Returns historical composite GSS scores for trend analysis. "
-                "Daily data points going back up to 5 years. "
-                "Useful for understanding how current conditions compare to "
-                "prior stress periods (GFC, COVID, SVB, 2022 rate shock)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "weeks": {
-                        "type": "integer",
-                        "default": 52,
-                        "minimum": 4,
-                        "maximum": 260,
-                        "description": "Lookback period in weeks",
-                    }
-                },
-                "required": [],
-            },
-        ),
-        Tool(
             name="get_weekly_narrative",
             description=(
                 "Returns the current GSS weekly narrative — a plain-language "
@@ -283,10 +249,7 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Route tool calls to db_reader functions."""
 
-    if name == "get_composite_stress_score":
-        return _respond(db_reader.get_composite_score())
-
-    elif name == "get_vector_status":
+    if name == "get_vector_status":
         slug = arguments.get("vector_slug", "")
         result = db_reader.get_vector_status(slug)
         if result is None:
@@ -313,11 +276,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         signal_id = arguments.get("signal_id", "").upper()
         weeks = arguments.get("weeks", 52)
         result = db_reader.get_signal_history(signal_id, weeks)
-        return _respond(result)
-
-    elif name == "get_composite_history":
-        weeks = arguments.get("weeks", 52)
-        result = db_reader.get_composite_history(weeks)
         return _respond(result)
 
     elif name == "get_weekly_narrative":
