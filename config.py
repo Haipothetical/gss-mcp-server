@@ -42,3 +42,8 @@ HOST = os.environ.get("MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MCP_PORT", "8765"))
 SERVER_NAME = os.environ.get("MCP_SERVER_NAME", "gss-mcp")
 SERVER_VERSION = os.environ.get("MCP_SERVER_VERSION", "0.1.0")
+
+# ── GA4 Measurement Protocol (optional) ───────────────────────────────────
+
+GA4_MEASUREMENT_ID = os.environ.get("GA4_MEASUREMENT_ID", "")
+GA4_API_SECRET = os.environ.get("GA4_API_SECRET", "")

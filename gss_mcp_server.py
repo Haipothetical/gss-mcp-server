@@ -13,10 +13,14 @@ Scores only — no raw data values, no k-factor weights, no signal weights.
 """
 
 import asyncio
+import contextvars
 import json
+import logging
 import os
+import time
 from datetime import datetime
 
+import httpx
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
@@ -29,6 +33,11 @@ from starlette.routing import Route, Mount
 import config
 import db_reader
 import auth
+
+logger = logging.getLogger("gss_mcp")
+
+# Context variable to carry auth info from SSE handler into tool calls
+_current_key = contextvars.ContextVar("current_key", default=None)
 
 # ── Server Initialization ────────────────────────────────────────────────────
 
@@ -243,60 +252,121 @@ async def list_tools() -> list[Tool]:
     ]
 
 
+# ── Usage Logging ──────────────────────────────────────────────────────────
+
+async def _send_ga4_event(tool_name: str, arguments: dict, response_ms: int,
+                          key_label: str, key_tier: str) -> None:
+    """Fire a GA4 Measurement Protocol event (async, fire-and-forget)."""
+    if not config.GA4_MEASUREMENT_ID or not config.GA4_API_SECRET:
+        return
+    try:
+        params = {
+            "tool_name": tool_name,
+            "key_label": key_label,
+            "key_tier": key_tier,
+            "response_ms": response_ms,
+        }
+        # Include the most useful argument per tool (signal_id, vector_slug, etc.)
+        for arg_key in ("signal_id", "vector_slug", "threshold", "days", "weeks"):
+            if arg_key in arguments:
+                params[arg_key] = str(arguments[arg_key])
+
+        url = (
+            f"https://www.google-analytics.com/mp/collect"
+            f"?measurement_id={config.GA4_MEASUREMENT_ID}"
+            f"&api_secret={config.GA4_API_SECRET}"
+        )
+        payload = {
+            "client_id": key_label or "unknown",
+            "events": [{"name": "mcp_tool_call", "params": params}],
+        }
+        async with httpx.AsyncClient() as client:
+            await client.post(url, json=payload, timeout=5.0)
+    except Exception as e:
+        logger.debug("GA4 send failed: %s", e)
+
+
+def _log_tool_call(tool_name: str, arguments: dict, response_ms: int) -> None:
+    """Log tool call to local DB + fire GA4 event async."""
+    key_record = _current_key.get()
+    key_id = key_record["key_id"] if key_record else None
+    key_label = key_record.get("key_label", "unknown") if key_record else "unknown"
+    key_tier = key_record.get("tier", "unknown") if key_record else "unknown"
+
+    # Local DB log
+    if key_id is not None:
+        try:
+            auth.log_tool_call(key_id, tool_name, response_ms)
+        except Exception as e:
+            logger.warning("Failed to write request_log: %s", e)
+
+    logger.info("tool=%s key=%s tier=%s args=%s ms=%d",
+                tool_name, key_label, key_tier, arguments, response_ms)
+
+    # GA4 (fire-and-forget)
+    asyncio.ensure_future(
+        _send_ga4_event(tool_name, arguments, response_ms, key_label, key_tier)
+    )
+
+
 # ── Tool Call Router ─────────────────────────────────────────────────────────
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Route tool calls to db_reader functions."""
+    t0 = time.monotonic()
 
     if name == "get_vector_status":
         slug = arguments.get("vector_slug", "")
-        result = db_reader.get_vector_status(slug)
-        if result is None:
-            return _respond({
+        data = db_reader.get_vector_status(slug)
+        if data is None:
+            result = _respond({
                 "error": f"Unknown vector: {slug}",
                 "valid_vectors": VECTOR_ENUM,
             })
-        return _respond(result)
+        else:
+            result = _respond(data)
 
     elif name == "get_all_vector_scores":
-        return _respond(db_reader.get_all_vector_scores())
+        result = _respond(db_reader.get_all_vector_scores())
 
     elif name == "get_signal_detail":
         signal_id = arguments.get("signal_id", "").upper()
-        result = db_reader.get_signal_detail(signal_id)
-        return _respond(result)
+        result = _respond(db_reader.get_signal_detail(signal_id))
 
     elif name == "get_elevated_signals":
         threshold = arguments.get("threshold", 51)
-        result = db_reader.get_elevated_signals(threshold)
-        return _respond(result, note=f"Showing signals with score >= {threshold}")
+        result = _respond(db_reader.get_elevated_signals(threshold),
+                          note=f"Showing signals with score >= {threshold}")
 
     elif name == "get_signal_history":
         signal_id = arguments.get("signal_id", "").upper()
         weeks = arguments.get("weeks", 52)
-        result = db_reader.get_signal_history(signal_id, weeks)
-        return _respond(result)
+        result = _respond(db_reader.get_signal_history(signal_id, weeks))
 
     elif name == "get_weekly_narrative":
-        return _respond(db_reader.get_weekly_narrative())
+        result = _respond(db_reader.get_weekly_narrative())
 
     elif name == "get_alert_events":
         days = arguments.get("days", 7)
-        result = db_reader.get_recent_alert_events(days)
-        return _respond(result, note=f"Alert events from last {days} days")
+        result = _respond(db_reader.get_recent_alert_events(days),
+                          note=f"Alert events from last {days} days")
 
     elif name == "get_compound_alerts":
-        return _respond(db_reader.get_compound_alerts())
+        result = _respond(db_reader.get_compound_alerts())
 
     elif name == "get_movers":
-        return _respond(db_reader.get_movers())
+        result = _respond(db_reader.get_movers())
 
     elif name == "get_signal_catalog":
-        return _respond(db_reader.get_signal_catalog())
+        result = _respond(db_reader.get_signal_catalog())
 
     else:
-        return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
+        result = [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
+
+    response_ms = int((time.monotonic() - t0) * 1000)
+    _log_tool_call(name, arguments, response_ms)
+    return result
 
 
 # ── SSE Transport Setup ─────────────────────────────────────────────────────
@@ -324,10 +394,14 @@ async def handle_sse(request: Request):
 
     key_record = auth.validate_key(raw_key)
     if not key_record:
+        logger.info("auth_rejected key=%s", raw_key[:8] + "...")
         return JSONResponse(
             {"error": "Invalid or rate-limited API key"},
             status_code=401,
         )
+
+    _current_key.set(key_record)
+    logger.info("session_start key=%s tier=%s", key_record["key_label"], key_record["tier"])
 
     async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
         await server.run(
@@ -369,4 +443,8 @@ app = Starlette(
 )
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="info")

@@ -68,6 +68,17 @@ def validate_key(raw_key: str) -> dict | None:
     return dict(row)
 
 
+def log_tool_call(key_id: int, tool_name: str, response_ms: int = None) -> None:
+    """Write a row to request_log for usage tracking."""
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO request_log (key_id, tool_name, response_ms) VALUES (?, ?, ?)",
+        (key_id, tool_name, response_ms),
+    )
+    conn.commit()
+    conn.close()
+
+
 def create_key(label: str, tier: str = "free") -> str:
     """Generate a new API key and store hashed version. Returns raw key."""
     import secrets
